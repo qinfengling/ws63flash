@@ -62,7 +62,7 @@ static inline int uart_open (int *fd, const char *ttydev, int baud)
 	struct termios tty;
 
 	if (*fd == -1) {
-		*fd = open(ttydev, O_RDWR | O_NOCTTY | O_SYNC);
+		*fd = open(ttydev, O_RDWR | O_NOCTTY | O_NONBLOCK);
 		if (*fd < 0) {
 			perror("open");
 			return -errno;
@@ -73,6 +73,14 @@ static inline int uart_open (int *fd, const char *ttydev, int baud)
 		perror("tcgetattr");
 		return -errno;
 	}
+
+	/* Enable receiver, ignore modem control lines */
+	tty.c_cflag |= (CLOCAL | CREAD);
+	tcsetattr(*fd, TCSANOW, &tty);
+
+	/* Make file descriptor blocking again */
+	int flags = fcntl(*fd, F_GETFL, 0);
+	fcntl(*fd, F_SETFL, flags & ~O_NONBLOCK);
 
 	speed_t speed = B115200;
 	int speed_found = 0;
@@ -306,23 +314,19 @@ int copy_part(FILE *fin, FILE *fout, long start, long length)
 
 int shm_tmpfile_fd(size_t size)
 {
-	char name[64];
-	snprintf(name, sizeof(name), "/tmpshm-%d-%ld", getpid(), random());
+	char name[] = "/tmp/fileXXXXXX";
 
-	int fd = shm_open(name, O_CREAT | O_EXCL | O_RDWR, 0600);
-	if (fd == -1) {
-		perror("shm_open");
+	int fd = mkstemp(name);
+	if (fd < 0) {
+		perror("mkstemp");
 		return -1;
 	}
 
 	if (ftruncate(fd, size) == -1) {
 		perror("ftruncate");
 		close(fd);
-		shm_unlink(name);
 		return -1;
 	}
-
-	shm_unlink(name);
 
 	return fd;
 }
